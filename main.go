@@ -1,11 +1,11 @@
 package main
 
 import (
-	"image"
 	"image/color"
-	"io/ioutil"
 	"log"
+	"os"
 
+	"github.com/dantidwell/game/assets"
 	"github.com/hajimehoshi/ebiten"
 )
 
@@ -20,6 +20,8 @@ func (b *button) update(down bool) {
 type game struct {
 	ticks uint64
 
+	assets *assets.Pack
+
 	input struct {
 		leftButton  button
 		rightButton button
@@ -28,17 +30,15 @@ type game struct {
 	}
 
 	player struct {
-		crouching bool
+		dirX float64
+		dirY float64
 
-		walking      bool
-		walkingFrame int
+		posX float64
+		posY float64
 	}
 
 	// assets go here for now
-	bgColor         color.Color
-	marioStanding   *ebiten.Image
-	marioCrouching  *ebiten.Image
-	marioWalkFrames []*ebiten.Image
+	bgColor color.Color
 }
 
 var palette = []color.Color{
@@ -49,18 +49,71 @@ var palette = []color.Color{
 }
 
 func (g *game) Draw(screen *ebiten.Image) {
-	screen.Fill(&color.RGBA{
-		R: 147,
-		G: 187,
-		B: 236,
-		A: 255,
-	})
-	if g.player.crouching {
-		screen.DrawImage(g.marioCrouching, &ebiten.DrawImageOptions{})
-	} else if g.player.walking {
-		screen.DrawImage(g.marioWalkFrames[g.player.walkingFrame], &ebiten.DrawImageOptions{})
-	} else {
-		screen.DrawImage(g.marioStanding, &ebiten.DrawImageOptions{})
+	// draw floor ...
+	var opts ebiten.DrawImageOptions
+
+	for y := 0; y < 240; y += 16 {
+		for x := 0; x < 256; x += 16 {
+			opts.GeoM.Reset()
+			opts.GeoM.Translate(float64(x), float64(y))
+			screen.DrawImage(g.assets.GetImage("floor0"), &opts)
+		}
+	}
+
+	// draw north wall ...
+	for x := 0; x < 256; x += 16 {
+		opts.GeoM.Reset()
+		opts.GeoM.Translate(float64(x), 0)
+		screen.DrawImage(g.assets.GetImage("wall"), &opts)
+	}
+
+	// draw border ...
+	opts.GeoM.Reset()
+	opts.GeoM.Translate(0, 0)
+	screen.DrawImage(g.assets.GetImage("border_nw"), &opts)
+
+	opts.GeoM.Reset()
+	opts.GeoM.Translate(256-16, 0)
+	screen.DrawImage(g.assets.GetImage("border_ne"), &opts)
+
+	opts.GeoM.Reset()
+	opts.GeoM.Translate(0, 240-16)
+	screen.DrawImage(g.assets.GetImage("border_sw"), &opts)
+
+	opts.GeoM.Reset()
+	opts.GeoM.Translate(256-16, 240-16)
+	screen.DrawImage(g.assets.GetImage("border_se"), &opts)
+
+	for y := 16; y < 240-16; y += 16 {
+		opts.GeoM.Reset()
+		opts.GeoM.Translate(0, float64(y))
+		screen.DrawImage(g.assets.GetImage("border_left"), &opts)
+
+		opts.GeoM.Reset()
+		opts.GeoM.Translate(256-16, float64(y))
+		screen.DrawImage(g.assets.GetImage("border_right"), &opts)
+	}
+	for x := 16; x < 256-16; x += 16 {
+		opts.GeoM.Reset()
+		opts.GeoM.Translate(float64(x), 0)
+		screen.DrawImage(g.assets.GetImage("border_top"), &opts)
+
+		opts.GeoM.Reset()
+		opts.GeoM.Translate(float64(x), 240-16)
+		screen.DrawImage(g.assets.GetImage("border_bottom"), &opts)
+	}
+
+	// draw the player
+	opts.GeoM.Reset()
+	opts.GeoM.Translate(g.player.posX, g.player.posY)
+	if g.player.dirX == 0 && g.player.dirY == 1 {
+		screen.DrawImage(g.assets.GetImage("dan_down"), &opts)
+	} else if g.player.dirX == 0 && g.player.dirY == -1 {
+		screen.DrawImage(g.assets.GetImage("dan_up"), &opts)
+	} else if g.player.dirX == 1 && g.player.dirY == 0 {
+		screen.DrawImage(g.assets.GetImage("dan_right"), &opts)
+	} else if g.player.dirX == -1 && g.player.dirY == 0 {
+		screen.DrawImage(g.assets.GetImage("dan_left"), &opts)
 	}
 }
 
@@ -72,19 +125,19 @@ func (g *game) Update(screen *ebiten.Image) error {
 	g.input.leftButton.update(ebiten.IsKeyPressed(ebiten.KeyLeft))
 	g.input.rightButton.update(ebiten.IsKeyPressed(ebiten.KeyRight))
 
-	if g.input.downButton.down {
-		g.player.crouching = true
-	} else {
-		g.player.crouching = false
+	if g.input.downButton.pressed {
+		g.player.posY += 16
+		g.player.dirX, g.player.dirY = 0, 1
+	} else if g.input.upButton.pressed {
+		g.player.posY -= 16
+		g.player.dirX, g.player.dirY = 0, -1
+	} else if g.input.rightButton.pressed {
+		g.player.posX += 16
+		g.player.dirX, g.player.dirY = 1, 0
+	} else if g.input.leftButton.pressed {
+		g.player.posX -= 16
+		g.player.dirX, g.player.dirY = -1, 0
 	}
-	if g.input.rightButton.down {
-		g.player.walking = true
-		g.player.walkingFrame = int(g.ticks % 30 / 10)
-	} else {
-		g.player.walking = false
-		g.player.walkingFrame = 0
-	}
-
 	return nil
 }
 
@@ -93,42 +146,20 @@ func (g *game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeigh
 }
 
 func main() {
-	assets, err := ioutil.ReadFile("game.dat")
+	f, err := os.Open("game.pak")
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer f.Close()
 
 	myGame := game{
-		bgColor:         color.Black,
-		marioWalkFrames: make([]*ebiten.Image, 3),
+		assets:  assets.Load(f),
+		bgColor: color.Black,
 	}
-
-	skip := 4 * 16 * 32
-	myGame.marioStanding, _ = ebiten.NewImageFromImage(&image.RGBA{
-		Pix:    assets[0*skip : 1*skip],
-		Stride: 4 * 16,
-		Rect:   image.Rect(0, 0, 16, 32),
-	}, ebiten.FilterDefault)
-	myGame.marioCrouching, _ = ebiten.NewImageFromImage(&image.RGBA{
-		Pix:    assets[1*skip : 2*skip],
-		Stride: 4 * 16,
-		Rect:   image.Rect(0, 0, 16, 32),
-	}, ebiten.FilterDefault)
-	myGame.marioWalkFrames[0], _ = ebiten.NewImageFromImage(&image.RGBA{
-		Pix:    assets[2*skip : 3*skip],
-		Stride: 4 * 16,
-		Rect:   image.Rect(0, 0, 16, 32),
-	}, ebiten.FilterDefault)
-	myGame.marioWalkFrames[1], _ = ebiten.NewImageFromImage(&image.RGBA{
-		Pix:    assets[3*skip : 4*skip],
-		Stride: 4 * 16,
-		Rect:   image.Rect(0, 0, 16, 32),
-	}, ebiten.FilterDefault)
-	myGame.marioWalkFrames[2], _ = ebiten.NewImageFromImage(&image.RGBA{
-		Pix:    assets[4*skip : 5*skip],
-		Stride: 4 * 16,
-		Rect:   image.Rect(0, 0, 16, 32),
-	}, ebiten.FilterDefault)
+	myGame.player.dirX = 1
+	myGame.player.dirY = 0
+	myGame.player.posX = 16
+	myGame.player.posY = 16
 
 	if err := ebiten.RunGame(&myGame); err != nil {
 		panic(err)
