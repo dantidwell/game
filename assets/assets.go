@@ -83,3 +83,7 @@ func (p *Pack) GetImage(name string) *ebiten.Image {
 	}
 	return info.Image.EngineImage
 }
+
+func (p *Pack) GetFontGlyph(c rune) *ebiten.Image {
+	return p.GetImage("font_" + string(c))
+}
