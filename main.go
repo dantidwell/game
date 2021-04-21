@@ -150,6 +150,7 @@ func (g *game) Draw(screen *ebiten.Image) {
 
 	opts.GeoM.Reset()
 	if g.showShoppingList {
+
 		x, y := 256.0/4, 240.0/4
 		opts.GeoM.Translate(x, y)
 
